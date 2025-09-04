@@ -219,7 +219,7 @@ HRESULT RoHelper::WindowsCompareStringOrdinal(HSTRING one, HSTRING two,
   return mFpWindowsCompareStringOrdinal(one, two, result);
 }
 
-support multiple webview windows in dart isolates
+// support multiple webview windows in dart isolates
 static ABI::Windows::System::IDispatcherQueueController** queueController;
 HRESULT RoHelper::CreateDispatcherQueueController(
     DispatcherQueueOptions options,
