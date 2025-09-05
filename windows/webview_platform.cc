@@ -43,7 +43,8 @@ WebviewPlatform::WebviewPlatform()
       return;
     }
 
-    dispatcher_queue_controller_.attach(globalController);
+    // FIX: safely copy instead of attach (attach would try to take ownership)
+    dispatcher_queue_controller_.copy_from(globalController);
 
     if (!IsGraphicsCaptureSessionSupported()) {
       std::cerr << "GraphicsCaptureSession not supported." << std::endl;
@@ -54,6 +55,7 @@ WebviewPlatform::WebviewPlatform()
     valid_ = graphics_context_->IsValid();
   }
 }
+
 
 bool WebviewPlatform::IsGraphicsCaptureSessionSupported() {
   HSTRING className;
