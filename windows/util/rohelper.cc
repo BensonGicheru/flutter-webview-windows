@@ -219,27 +219,36 @@ HRESULT RoHelper::WindowsCompareStringOrdinal(HSTRING one, HSTRING two,
   return mFpWindowsCompareStringOrdinal(one, two, result);
 }
 
-// support multiple webview windows in dart isolates
-static ABI::Windows::System::IDispatcherQueueController** queueController;
 HRESULT RoHelper::CreateDispatcherQueueController(
     DispatcherQueueOptions options,
-    ABI::Windows::System::IDispatcherQueueController**
-        dispatcherQueueController) {
+    ABI::Windows::System::IDispatcherQueueController** dispatcherQueueController) {
   if (!mWinRtAvailable) {
     return E_FAIL;
   }
-  //return mFpCreateDispatcherQueueController(options, dispatcherQueueController);
-  // support multiple webview windows in dart isolates
-  if (queueController == nullptr || *queueController == nullptr) {
-    auto result = mFpCreateDispatcherQueueController(options, dispatcherQueueController);
-    queueController = dispatcherQueueController;
-    return result;
+
+  // Always call the system function. Do NOT try to reuse across threads.
+  HRESULT hr = mFpCreateDispatcherQueueController(options, dispatcherQueueController);
+
+  if (SUCCEEDED(hr)) {
+    return hr;
   }
-  else
-  {
-    dispatcherQueueController = queueController;
+
+  // Treat "already exists" as success (some other code created it earlier on this thread).
+  if (hr == HRESULT_FROM_WIN32(ERROR_ALREADY_EXISTS)) {
+    // The function failed because a queue already exists on this thread.
+    // Try returning S_OK but leave *dispatcherQueueController as nullptr.
+    // The caller should handle that and check DispatcherQueue::GetForCurrentThread() if needed.
     return S_OK;
   }
+
+  // If we hit RPC_E_WRONG_THREAD, we likely attempted to create a controller on a thread
+  // which already has COM objects bound to a different apartment — fail and let the caller decide.
+  if (hr == RPC_E_WRONG_THREAD) {
+    // Log it for debugging
+    OutputDebugString(L"RoHelper::CreateDispatcherQueueController -> RPC_E_WRONG_THREAD\n");
+  }
+
+  return hr; // propagate the real failure to caller
 }
 
 HRESULT RoHelper::WindowsDeleteString(HSTRING one) {
