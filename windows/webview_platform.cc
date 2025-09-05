@@ -38,35 +38,23 @@ WebviewPlatform::WebviewPlatform()
     DispatcherQueueOptions options{sizeof(DispatcherQueueOptions),
                                    DQTYPE_THREAD_CURRENT, DQTAT_COM_STA};
 
-    // Check for existing DispatcherQueue first
-    bool haveQueue = false;
-    // Try to use WinRT ABI: DispatcherQueue::GetForCurrentThread
-    ABI::Windows::System::IDispatcherQueue* existingQueue = nullptr;
-    HRESULT hrGet = rohelper_->GetDispatcherQueueForCurrentThread(&existingQueue);
-    if (SUCCEEDED(hrGet) && existingQueue != nullptr) {
-      haveQueue = true;
-      OutputDebugString(L"Existing DispatcherQueue found; skipping Create.\n");
-      // release existingQueue if necessary
-      existingQueue->Release();
-    }
+    HRESULT hr = rohelper_->CreateDispatcherQueueController(
+        options, dispatcher_queue_controller_.put());
 
-    if (!haveQueue) {
-      HRESULT hrCreate = rohelper_->CreateDispatcherQueueController(
-          options, dispatcher_queue_controller_.put());
-      if (FAILED(hrCreate)) {
-        // Log detailed failure code
-        wchar_t buf[256];
-        swprintf_s(buf, L"Creating DispatcherQueueController failed. HRESULT=0x%08X\n", hrCreate);
-        OutputDebugString(buf);
-        // Return early — plugin will mark itself invalid
-        return;
+    if (FAILED(hr)) {
+      if (hr == HRESULT_FROM_WIN32(ERROR_ALREADY_EXISTS)) {
+        std::cerr << "DispatcherQueue already exists, continuing." << std::endl;
       } else {
-        OutputDebugString(L"Created DispatcherQueueController OK inside plugin.\n");
+        std::cerr << "Creating DispatcherQueueController failed. HRESULT=0x"
+                  << std::hex << hr << std::endl;
+        return;
       }
     }
 
     if (!IsGraphicsCaptureSessionSupported()) {
-      OutputDebugString(L"GraphicsCaptureSession is not supported.\n");
+      std::cerr << "Windows::Graphics::Capture::GraphicsCaptureSession is not "
+                   "supported."
+                << std::endl;
       return;
     }
 
