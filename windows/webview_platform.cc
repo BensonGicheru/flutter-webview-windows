@@ -7,6 +7,7 @@
 
 #include <filesystem>
 #include <iostream>
+#include "dispatcher_bridge.h" // dispatcher_bridge.h come from main tune app
 
 //WebviewPlatform::WebviewPlatform()
 //    : rohelper_(std::make_unique<rx::RoHelper>(RO_INIT_SINGLETHREADED)) {
@@ -35,8 +36,6 @@
 WebviewPlatform::WebviewPlatform()
     : rohelper_(std::make_unique<rx::RoHelper>(RO_INIT_SINGLETHREADED)) {
   if (rohelper_->WinRtAvailable()) {
-    // Instead of creating a new dispatcher, reuse the one provided by the tune.fm app's main.cpp.
-    extern ABI::Windows::System::IDispatcherQueueController* GetAppDispatcherQueueController();
     auto globalController = GetAppDispatcherQueueController();
 
     if (!globalController) {
@@ -44,13 +43,10 @@ WebviewPlatform::WebviewPlatform()
       return;
     }
 
-    // Attach the existing controller
     dispatcher_queue_controller_.attach(globalController);
 
     if (!IsGraphicsCaptureSessionSupported()) {
-      std::cerr << "Windows::Graphics::Capture::GraphicsCaptureSession is not "
-                   "supported."
-                << std::endl;
+      std::cerr << "GraphicsCaptureSession not supported." << std::endl;
       return;
     }
 
