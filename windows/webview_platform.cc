@@ -35,21 +35,17 @@
 WebviewPlatform::WebviewPlatform()
     : rohelper_(std::make_unique<rx::RoHelper>(RO_INIT_SINGLETHREADED)) {
   if (rohelper_->WinRtAvailable()) {
-    DispatcherQueueOptions options{sizeof(DispatcherQueueOptions),
-                                   DQTYPE_THREAD_CURRENT, DQTAT_COM_STA};
+    // Instead of creating a new dispatcher, reuse the one provided by the tune.fm app's main.cpp.
+    extern ABI::Windows::System::IDispatcherQueueController* GetAppDispatcherQueueController();
+    auto globalController = GetAppDispatcherQueueController();
 
-    HRESULT hr = rohelper_->CreateDispatcherQueueController(
-        options, dispatcher_queue_controller_.put());
-
-    if (FAILED(hr)) {
-      if (hr == HRESULT_FROM_WIN32(ERROR_ALREADY_EXISTS)) {
-        std::cerr << "DispatcherQueue already exists, continuing." << std::endl;
-      } else {
-        std::cerr << "Creating DispatcherQueueController failed. HRESULT=0x"
-                  << std::hex << hr << std::endl;
-        return;
-      }
+    if (!globalController) {
+      std::cerr << "No DispatcherQueueController available from app." << std::endl;
+      return;
     }
+
+    // Attach the existing controller
+    dispatcher_queue_controller_.attach(globalController);
 
     if (!IsGraphicsCaptureSessionSupported()) {
       std::cerr << "Windows::Graphics::Capture::GraphicsCaptureSession is not "
