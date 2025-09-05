@@ -1,11 +1,36 @@
 #include "webview_platform.h"
 
 #include <DispatcherQueue.h>
+#include <windows.h> // for OutputDebugString
 #include <shlobj.h>
 #include <windows.graphics.capture.h>
 
 #include <filesystem>
 #include <iostream>
+
+//WebviewPlatform::WebviewPlatform()
+//    : rohelper_(std::make_unique<rx::RoHelper>(RO_INIT_SINGLETHREADED)) {
+//  if (rohelper_->WinRtAvailable()) {
+//    DispatcherQueueOptions options{sizeof(DispatcherQueueOptions),
+//                                   DQTYPE_THREAD_CURRENT, DQTAT_COM_STA};
+//
+//    if (FAILED(rohelper_->CreateDispatcherQueueController(
+//            options, dispatcher_queue_controller_.put()))) {
+//      std::cerr << "Creating DispatcherQueueController failed." << std::endl;
+//      return;
+//    }
+//
+//    if (!IsGraphicsCaptureSessionSupported()) {
+//      std::cerr << "Windows::Graphics::Capture::GraphicsCaptureSession is not "
+//                   "supported."
+//                << std::endl;
+//      return;
+//    }
+//
+//    graphics_context_ = std::make_unique<GraphicsContext>(rohelper_.get());
+//    valid_ = graphics_context_->IsValid();
+//  }
+//}
 
 WebviewPlatform::WebviewPlatform()
     : rohelper_(std::make_unique<rx::RoHelper>(RO_INIT_SINGLETHREADED)) {
@@ -13,16 +38,35 @@ WebviewPlatform::WebviewPlatform()
     DispatcherQueueOptions options{sizeof(DispatcherQueueOptions),
                                    DQTYPE_THREAD_CURRENT, DQTAT_COM_STA};
 
-    if (FAILED(rohelper_->CreateDispatcherQueueController(
-            options, dispatcher_queue_controller_.put()))) {
-      std::cerr << "Creating DispatcherQueueController failed." << std::endl;
-      return;
+    // Check for existing DispatcherQueue first
+    bool haveQueue = false;
+    // Try to use WinRT ABI: DispatcherQueue::GetForCurrentThread
+    ABI::Windows::System::IDispatcherQueue* existingQueue = nullptr;
+    HRESULT hrGet = rohelper_->GetDispatcherQueueForCurrentThread(&existingQueue);
+    if (SUCCEEDED(hrGet) && existingQueue != nullptr) {
+      haveQueue = true;
+      OutputDebugString(L"Existing DispatcherQueue found; skipping Create.\n");
+      // release existingQueue if necessary
+      existingQueue->Release();
+    }
+
+    if (!haveQueue) {
+      HRESULT hrCreate = rohelper_->CreateDispatcherQueueController(
+          options, dispatcher_queue_controller_.put());
+      if (FAILED(hrCreate)) {
+        // Log detailed failure code
+        wchar_t buf[256];
+        swprintf_s(buf, L"Creating DispatcherQueueController failed. HRESULT=0x%08X\n", hrCreate);
+        OutputDebugString(buf);
+        // Return early — plugin will mark itself invalid
+        return;
+      } else {
+        OutputDebugString(L"Created DispatcherQueueController OK inside plugin.\n");
+      }
     }
 
     if (!IsGraphicsCaptureSessionSupported()) {
-      std::cerr << "Windows::Graphics::Capture::GraphicsCaptureSession is not "
-                   "supported."
-                << std::endl;
+      OutputDebugString(L"GraphicsCaptureSession is not supported.\n");
       return;
     }
 
