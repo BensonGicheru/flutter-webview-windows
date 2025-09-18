@@ -1,3 +1,4 @@
+#include <winrt/Windows.System.h>
 #include "webview_platform.h"
 
 #include <DispatcherQueue.h>
@@ -8,33 +9,33 @@
 #include <iostream>
 
 WebviewPlatform::WebviewPlatform()
-    : rohelper_(std::make_unique<rx::RoHelper>(RO_INIT_SINGLETHREADED)) {
-  if (rohelper_->WinRtAvailable()) {
-      // Try STA first
-      DispatcherQueueOptions optionsSta{
-              sizeof(DispatcherQueueOptions),
-              DQTYPE_THREAD_CURRENT,
-              DQTAT_COM_STA};
+        : rohelper_(std::make_unique<rx::RoHelper>(RO_INIT_SINGLETHREADED)) {
+    if (rohelper_->WinRtAvailable()) {
+        // Check if a DispatcherQueue already exists on this thread
+        auto existingDQ = winrt::Windows::System::DispatcherQueue::GetForCurrentThread();
+        if (!existingDQ) {
+            // Try STA dispatcher first
+            DispatcherQueueOptions options{
+                    sizeof(DispatcherQueueOptions),
+                    DQTYPE_THREAD_CURRENT,
+                    DQTAT_COM_STA};
 
-      HRESULT hr = rohelper_->CreateDispatcherQueueController(
-              optionsSta, dispatcher_queue_controller_.put());
+            HRESULT hr = rohelper_->CreateDispatcherQueueController(
+                    options, dispatcher_queue_controller_.put());
 
-      if (FAILED(hr)) {
-          // Fallback: try COM_NONE
-          DispatcherQueueOptions optionsNone{
-                  sizeof(DispatcherQueueOptions),
-                  DQTYPE_THREAD_CURRENT,
-                  DQTAT_COM_NONE};
+            if (FAILED(hr)) {
+                // Fallback: retry with COM_NONE if STA failed (e.g. running on MTA thread)
+                options.apartmentType = DQTAT_COM_NONE;
+                hr = rohelper_->CreateDispatcherQueueController(
+                        options, dispatcher_queue_controller_.put());
+            }
 
-          hr = rohelper_->CreateDispatcherQueueController(
-                  optionsNone, dispatcher_queue_controller_.put());
-      }
-
-      if (FAILED(hr)) {
-          std::wcerr << L"CreateDispatcherQueueController failed. HRESULT="
-                     << std::hex << hr << std::endl;
-          return;
-      }
+            if (FAILED(hr)) {
+                std::cerr << "Creating DispatcherQueueController failed. HRESULT=0x"
+                          << std::hex << hr << std::dec << std::endl;
+                return;
+            }
+        }
 
     if (!IsGraphicsCaptureSessionSupported()) {
       std::cerr << "Windows::Graphics::Capture::GraphicsCaptureSession is not "
