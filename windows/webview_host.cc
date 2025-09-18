@@ -8,21 +8,29 @@
 
 using namespace Microsoft::WRL;
 
+// ────────────────────────────────────────────────
+// Helper: safely get WebView2 browser folder
 static std::wstring GetBrowserFolderFromEnvOrArg(
         const std::optional<std::wstring>& argPathOpt) {
     // If Dart passed a path, prefer it
     if (argPathOpt.has_value() && !argPathOpt->empty()) {
         return *argPathOpt;
     }
-    // Otherwise read env var – it must be a folder containing msedgewebview2.exe
-    wchar_t* envp = _wgetenv(L"WEBVIEW2_BROWSER_EXECUTABLE_FOLDER");
-    if (envp && *envp) {
-        return std::wstring(envp);
+
+    // Otherwise, check environment
+    wchar_t* envValue = nullptr;
+    size_t len = 0;
+    if (_wdupenv_s(&envValue, &len, L"WEBVIEW2_BROWSER_EXECUTABLE_FOLDER") == 0 &&
+        envValue != nullptr) {
+        std::wstring result(envValue);
+        free(envValue);
+        return result;
     }
     return L"";
 }
 
-// static
+// ────────────────────────────────────────────────
+// Create WebView host
 std::unique_ptr<WebviewHost> WebviewHost::Create(
         WebviewPlatform* platform,
         std::optional<std::wstring> user_data_directory,
@@ -36,7 +44,7 @@ std::unique_ptr<WebviewHost> WebviewHost::Create(
         opts->put_AdditionalBrowserArguments(warguments.c_str());
     }
 
-    // Compute folder to pass to WebView2 (explicit beats relying on env-only)
+    // Compute folder to pass to WebView2
     std::wstring exeFolder = GetBrowserFolderFromEnvOrArg(browser_exe_path);
     const wchar_t* browserFolderArg =
             exeFolder.empty() ? nullptr : exeFolder.c_str();
@@ -88,6 +96,8 @@ std::unique_ptr<WebviewHost> WebviewHost::Create(
     return std::unique_ptr<WebviewHost>(new WebviewHost(platform, std::move(env3)));
 }
 
+// ────────────────────────────────────────────────
+// Instance methods
 WebviewHost::WebviewHost(WebviewPlatform* platform,
                          wil::com_ptr<ICoreWebView2Environment3> webview_env)
         : webview_env_(webview_env) {
