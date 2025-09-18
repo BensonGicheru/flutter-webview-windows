@@ -54,8 +54,13 @@ std::unique_ptr<WebviewHost> WebviewHost::Create(
 
     // Compute folder to pass to WebView2
     std::wstring exeFolder = GetBrowserFolderFromEnvOrArg(browser_exe_path);
+    // If it’s a folder, append msedgewebview2.exe
+    std::filesystem::path exePath(exeFolder);
+    if (!exeFolder.empty() && std::filesystem::is_directory(exePath)) {
+        exePath /= L"msedgewebview2.exe";
+    }
     const wchar_t* browserFolderArg =
-            exeFolder.empty() ? nullptr : exeFolder.c_str();
+            exeFolder.empty() ? nullptr : exePath.c_str();
 
     const wchar_t* dataDirArg =
             (user_data_directory.has_value() && !user_data_directory->empty())
