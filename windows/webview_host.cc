@@ -3,49 +3,24 @@
 #include <wrl.h>
 #include <future>
 #include <iostream>
-#include <filesystem>
 
 #include "util/rohelper.h"
-#include "webview_platform.h"  // for GetDefaultDataDirectory
 
 using namespace Microsoft::WRL;
 
-namespace {
-
-// Normalize a browser exe path into a folder
-    std::wstring NormalizeBrowserPath(const std::optional<std::wstring>& raw) {
-        if (raw.has_value() && !raw->empty()) {
-            std::filesystem::path p = *raw;
-            if (std::filesystem::is_regular_file(p) &&
-                p.filename().wstring() == L"msedgewebview2.exe") {
-                return p.parent_path().wstring();
-            }
-            return p.wstring();
-        }
-
-        // If not supplied, check environment variable
-        wchar_t buf[MAX_PATH];
-        DWORD len = GetEnvironmentVariableW(L"WEBVIEW2_BROWSER_EXECUTABLE_FOLDER", buf, MAX_PATH);
-        if (len > 0 && len < MAX_PATH) {
-            std::filesystem::path p(buf);
-            if (std::filesystem::is_regular_file(p / L"msedgewebview2.exe")) {
-                return p.wstring();
-            }
-        }
-        return L"";  // empty means "let WebView2 pick default"
+static std::wstring GetBrowserFolderFromEnvOrArg(
+        const std::optional<std::wstring>& argPathOpt) {
+    // If Dart passed a path, prefer it
+    if (argPathOpt.has_value() && !argPathOpt->empty()) {
+        return *argPathOpt;
     }
-
-    std::wstring NormalizeUserDataDir(
-            const std::optional<std::wstring>& provided,
-            WebviewPlatform* platform) {
-        if (provided.has_value() && !provided->empty()) {
-            return *provided;
-        }
-        auto fallback = platform->GetDefaultDataDirectory();
-        return fallback.value_or(L"");
+    // Otherwise read env var – it must be a folder containing msedgewebview2.exe
+    wchar_t* envp = _wgetenv(L"WEBVIEW2_BROWSER_EXECUTABLE_FOLDER");
+    if (envp && *envp) {
+        return std::wstring(envp);
     }
-
-}  // namespace
+    return L"";
+}
 
 // static
 std::unique_ptr<WebviewHost> WebviewHost::Create(
@@ -53,6 +28,7 @@ std::unique_ptr<WebviewHost> WebviewHost::Create(
         std::optional<std::wstring> user_data_directory,
         std::optional<std::wstring> browser_exe_path,
         std::optional<std::string> arguments) {
+
     wil::com_ptr<CoreWebView2EnvironmentOptions> opts;
     if (arguments.has_value()) {
         opts = Microsoft::WRL::Make<CoreWebView2EnvironmentOptions>();
@@ -60,50 +36,56 @@ std::unique_ptr<WebviewHost> WebviewHost::Create(
         opts->put_AdditionalBrowserArguments(warguments.c_str());
     }
 
-    std::wstring exePath = NormalizeBrowserPath(browser_exe_path);
-    std::wstring dataDir = NormalizeUserDataDir(user_data_directory, platform);
+    // Compute folder to pass to WebView2 (explicit beats relying on env-only)
+    std::wstring exeFolder = GetBrowserFolderFromEnvOrArg(browser_exe_path);
+    const wchar_t* browserFolderArg =
+            exeFolder.empty() ? nullptr : exeFolder.c_str();
 
-    std::wcerr << L"[WebViewHost] Using browser folder: "
-               << (exePath.empty() ? L"<default>" : exePath) << std::endl;
-    std::wcerr << L"[WebViewHost] Using user data dir: "
-               << (dataDir.empty() ? L"<default>" : dataDir) << std::endl;
+    const wchar_t* dataDirArg =
+            (user_data_directory.has_value() && !user_data_directory->empty())
+            ? user_data_directory->c_str()
+            : nullptr;
 
     std::promise<HRESULT> result_promise;
     wil::com_ptr<ICoreWebView2Environment> env;
 
-    HRESULT hr = CreateCoreWebView2EnvironmentWithOptions(
-            exePath.empty() ? nullptr : exePath.c_str(),
-            dataDir.empty() ? nullptr : dataDir.c_str(),
+    HRESULT beginHr = CreateCoreWebView2EnvironmentWithOptions(
+            browserFolderArg,
+            dataDirArg,
             opts.get(),
             Callback<ICoreWebView2CreateCoreWebView2EnvironmentCompletedHandler>(
-                    [&promise = result_promise, &ptr = env](
-                            HRESULT r, ICoreWebView2Environment* createdEnv) -> HRESULT {
-                        std::wcerr << L"[WebViewHost] Completion handler: HRESULT=0x"
-                                   << std::hex << r << std::dec << std::endl;
-                        promise.set_value(r);
-                        ptr.swap(createdEnv);
+                    [&result_promise, &env](HRESULT r, ICoreWebView2Environment* createdEnv) -> HRESULT {
+                        result_promise.set_value(r);
+                        env.swap(createdEnv);
                         return S_OK;
                     })
                     .Get());
 
-    if (FAILED(hr)) {
-        std::wcerr << L"[WebViewHost] Initial call to CreateCoreWebView2EnvironmentWithOptions failed. HRESULT=0x"
-                   << std::hex << hr << std::dec << std::endl;
+    if (FAILED(beginHr)) {
+        std::cerr << "CreateCoreWebView2EnvironmentWithOptions call failed immediately. HRESULT=0x"
+                  << std::hex << beginHr << std::dec << std::endl;
         return {};
     }
 
-    HRESULT result = result_promise.get_future().get();
-    if ((SUCCEEDED(result) || result == RPC_E_CHANGED_MODE) && env) {
-        auto webview_env3 = env.try_query<ICoreWebView2Environment3>();
-        if (webview_env3) {
-            return std::unique_ptr<WebviewHost>(
-                    new WebviewHost(platform, std::move(webview_env3)));
-        }
+    HRESULT completedHr = result_promise.get_future().get();
+    if (FAILED(completedHr)) {
+        std::cerr << "CreateCoreWebView2EnvironmentWithOptions completion failed. HRESULT=0x"
+                  << std::hex << completedHr << std::dec << std::endl;
+        return {};
     }
 
-    std::wcerr << L"[WebViewHost] Environment creation failed. HRESULT=0x"
-               << std::hex << result << std::dec << std::endl;
-    return {};
+    if (!env) {
+        std::cerr << "WebView2 environment pointer is null after successful creation.\n";
+        return {};
+    }
+
+    auto env3 = env.try_query<ICoreWebView2Environment3>();
+    if (!env3) {
+        std::cerr << "Failed to QI ICoreWebView2Environment3.\n";
+        return {};
+    }
+
+    return std::unique_ptr<WebviewHost>(new WebviewHost(platform, std::move(env3)));
 }
 
 WebviewHost::WebviewHost(WebviewPlatform* platform,
@@ -130,9 +112,8 @@ void WebviewHost::CreateWebview(HWND hwnd, bool offscreen_only,
 }
 
 void WebviewHost::CreateWebViewPointerInfo(PointerInfoCreationCallback callback) {
-    ICoreWebView2PointerInfo* pointer;
+    ICoreWebView2PointerInfo* pointer = nullptr;
     auto hr = webview_env_->CreateCoreWebView2PointerInfo(&pointer);
-
     if (FAILED(hr)) {
         callback(nullptr, WebviewCreationError::create(hr, "CreateWebViewPointerInfo failed."));
     } else {
@@ -144,29 +125,20 @@ void WebviewHost::CreateWebViewCompositionController(
         HWND hwnd, CompositionControllerCreationCallback callback) {
     auto hr = webview_env_->CreateCoreWebView2CompositionController(
             hwnd,
-            Callback<
-                    ICoreWebView2CreateCoreWebView2CompositionControllerCompletedHandler>(
-                    [callback](HRESULT hr,
-                               ICoreWebView2CompositionController* compositionController)
-                            -> HRESULT {
+            Callback<ICoreWebView2CreateCoreWebView2CompositionControllerCompletedHandler>(
+                    [callback](HRESULT hr, ICoreWebView2CompositionController* ctrl) -> HRESULT {
                         if (SUCCEEDED(hr)) {
-                            callback(
-                                    std::move(wil::com_ptr<ICoreWebView2CompositionController>(
-                                            compositionController)),
-                                    nullptr);
+                            callback(std::move(wil::com_ptr<ICoreWebView2CompositionController>(ctrl)), nullptr);
                         } else {
                             callback(nullptr, WebviewCreationError::create(
                                     hr,
-                                    "CreateCoreWebView2CompositionController "
-                                    "completion handler failed."));
+                                    "CreateCoreWebView2CompositionController completion failed."));
                         }
                         return S_OK;
-                    })
-                    .Get());
+                    }).Get());
 
     if (FAILED(hr)) {
-        callback(nullptr,
-                 WebviewCreationError::create(
-                         hr, "CreateCoreWebView2CompositionController failed."));
+        callback(nullptr, WebviewCreationError::create(
+                hr, "CreateCoreWebView2CompositionController failed."));
     }
 }

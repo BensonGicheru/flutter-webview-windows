@@ -10,86 +10,75 @@
 
 WebviewPlatform::WebviewPlatform()
         : rohelper_(std::make_unique<rx::RoHelper>(RO_INIT_SINGLETHREADED)) {
-    if (rohelper_->WinRtAvailable()) {
-        // Check if a DispatcherQueue already exists on this thread
-        auto existingDQ = winrt::Windows::System::DispatcherQueue::GetForCurrentThread();
-        if (!existingDQ) {
-            // Try STA dispatcher first
-            DispatcherQueueOptions options{
-                    sizeof(DispatcherQueueOptions),
-                    DQTYPE_THREAD_CURRENT,
-                    DQTAT_COM_STA};
+    if (!rohelper_->WinRtAvailable()) return;
 
-            HRESULT hr = rohelper_->CreateDispatcherQueueController(
+    // Reuse an existing DispatcherQueue on this thread if there is one.
+    auto existingDQ = winrt::Windows::System::DispatcherQueue::GetForCurrentThread();
+    if (!existingDQ) {
+        DispatcherQueueOptions options{
+                sizeof(DispatcherQueueOptions),
+                DQTYPE_THREAD_CURRENT,
+                DQTAT_COM_STA};
+
+        HRESULT hr = rohelper_->CreateDispatcherQueueController(
+                options, dispatcher_queue_controller_.put());
+
+        if (FAILED(hr)) {
+            // If STA failed (e.g. thread is MTA) retry with COM_NONE.
+            options.apartmentType = DQTAT_COM_NONE;
+            hr = rohelper_->CreateDispatcherQueueController(
                     options, dispatcher_queue_controller_.put());
-
-            if (FAILED(hr)) {
-                // Fallback: retry with COM_NONE if STA failed (e.g. running on MTA thread)
-                options.apartmentType = DQTAT_COM_NONE;
-                hr = rohelper_->CreateDispatcherQueueController(
-                        options, dispatcher_queue_controller_.put());
-            }
-
-            if (FAILED(hr)) {
-                std::cerr << "Creating DispatcherQueueController failed. HRESULT=0x"
-                          << std::hex << hr << std::dec << std::endl;
-                return;
-            }
         }
 
+        if (FAILED(hr)) {
+            std::cerr << "Creating DispatcherQueueController failed. HRESULT=0x"
+                      << std::hex << hr << std::dec << std::endl;
+            return;
+        }
+    }
+
     if (!IsGraphicsCaptureSessionSupported()) {
-      std::cerr << "Windows::Graphics::Capture::GraphicsCaptureSession is not "
-                   "supported."
-                << std::endl;
-      return;
+        std::cerr << "Windows::Graphics::Capture::GraphicsCaptureSession is not supported.\n";
+        return;
     }
 
     graphics_context_ = std::make_unique<GraphicsContext>(rohelper_.get());
     valid_ = graphics_context_->IsValid();
-  }
 }
 
 bool WebviewPlatform::IsGraphicsCaptureSessionSupported() {
-  HSTRING className;
-  HSTRING_HEADER classNameHeader;
+    HSTRING className;
+    HSTRING_HEADER classNameHeader;
 
-  if (FAILED(rohelper_->GetStringReference(
-          RuntimeClass_Windows_Graphics_Capture_GraphicsCaptureSession,
-          &className, &classNameHeader))) {
-    return false;
-  }
+    if (FAILED(rohelper_->GetStringReference(
+            RuntimeClass_Windows_Graphics_Capture_GraphicsCaptureSession,
+            &className, &classNameHeader))) {
+        return false;
+    }
 
-  ABI::Windows::Graphics::Capture::IGraphicsCaptureSessionStatics*
-      capture_session_statics;
-  if (FAILED(rohelper_->GetActivationFactory(
-          className,
-          __uuidof(
-              ABI::Windows::Graphics::Capture::IGraphicsCaptureSessionStatics),
-          (void**)&capture_session_statics))) {
-    return false;
-  }
+    ABI::Windows::Graphics::Capture::IGraphicsCaptureSessionStatics* capture_session_statics;
+    if (FAILED(rohelper_->GetActivationFactory(
+            className,
+            __uuidof(ABI::Windows::Graphics::Capture::IGraphicsCaptureSessionStatics),
+            (void**)&capture_session_statics))) {
+        return false;
+    }
 
-  boolean is_supported = false;
-  if (FAILED(capture_session_statics->IsSupported(&is_supported))) {
-    return false;
-  }
-
-  return !!is_supported;
+    boolean is_supported = false;
+    return SUCCEEDED(capture_session_statics->IsSupported(&is_supported)) && !!is_supported;
 }
 
 std::optional<std::wstring> WebviewPlatform::GetDefaultDataDirectory() {
-  PWSTR path_tmp;
-  if (!SUCCEEDED(
-          SHGetKnownFolderPath(FOLDERID_LocalAppData, 0, nullptr, &path_tmp))) {
-    return std::nullopt;
-  }
-  auto path = std::filesystem::path(path_tmp);
-  CoTaskMemFree(path_tmp);
+    PWSTR path_tmp;
+    if (!SUCCEEDED(SHGetKnownFolderPath(FOLDERID_LocalAppData, 0, nullptr, &path_tmp))) {
+        return std::nullopt;
+    }
+    auto path = std::filesystem::path(path_tmp);
+    CoTaskMemFree(path_tmp);
 
-  wchar_t filename[MAX_PATH];
-  GetModuleFileName(nullptr, filename, MAX_PATH);
-  path /= "flutter_webview_windows";
-  path /= std::filesystem::path(filename).stem();
-
-  return path.wstring();
+    wchar_t filename[MAX_PATH];
+    GetModuleFileName(nullptr, filename, MAX_PATH);
+    path /= "flutter_webview_windows";
+    path /= std::filesystem::path(filename).stem();
+    return path.wstring();
 }
