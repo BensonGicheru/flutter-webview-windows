@@ -10,14 +10,31 @@
 WebviewPlatform::WebviewPlatform()
     : rohelper_(std::make_unique<rx::RoHelper>(RO_INIT_SINGLETHREADED)) {
   if (rohelper_->WinRtAvailable()) {
-    DispatcherQueueOptions options{sizeof(DispatcherQueueOptions),
-                                   DQTYPE_THREAD_CURRENT, DQTAT_COM_STA};
+      // Try STA first
+      DispatcherQueueOptions optionsSta{
+              sizeof(DispatcherQueueOptions),
+              DQTYPE_THREAD_CURRENT,
+              DQTAT_COM_STA};
 
-    if (FAILED(rohelper_->CreateDispatcherQueueController(
-            options, dispatcher_queue_controller_.put()))) {
-      std::cerr << "Creating DispatcherQueueController failed." << std::endl;
-      return;
-    }
+      HRESULT hr = rohelper_->CreateDispatcherQueueController(
+              optionsSta, dispatcher_queue_controller_.put());
+
+      if (FAILED(hr)) {
+          // Fallback: try COM_NONE
+          DispatcherQueueOptions optionsNone{
+                  sizeof(DispatcherQueueOptions),
+                  DQTYPE_THREAD_CURRENT,
+                  DQTAT_COM_NONE};
+
+          hr = rohelper_->CreateDispatcherQueueController(
+                  optionsNone, dispatcher_queue_controller_.put());
+      }
+
+      if (FAILED(hr)) {
+          std::wcerr << L"CreateDispatcherQueueController failed. HRESULT="
+                     << std::hex << hr << std::endl;
+          return;
+      }
 
     if (!IsGraphicsCaptureSessionSupported()) {
       std::cerr << "Windows::Graphics::Capture::GraphicsCaptureSession is not "
