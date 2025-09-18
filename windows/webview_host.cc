@@ -14,6 +14,8 @@ static std::wstring GetBrowserFolderFromEnvOrArg(
         const std::optional<std::wstring>& argPathOpt) {
     // If Dart passed a path, prefer it
     if (argPathOpt.has_value() && !argPathOpt->empty()) {
+        std::wcerr << L"[WebviewHost] browser_exe_path argument provided: "
+                   << *argPathOpt << std::endl;
         return *argPathOpt;
     }
 
@@ -24,8 +26,12 @@ static std::wstring GetBrowserFolderFromEnvOrArg(
         envValue != nullptr) {
         std::wstring result(envValue);
         free(envValue);
+        std::wcerr << L"[WebviewHost] using WEBVIEW2_BROWSER_EXECUTABLE_FOLDER from env: "
+                   << result << std::endl;
         return result;
     }
+
+    std::wcerr << L"[WebviewHost] no browser_exe_path arg and no env var set" << std::endl;
     return L"";
 }
 
@@ -42,6 +48,8 @@ std::unique_ptr<WebviewHost> WebviewHost::Create(
         opts = Microsoft::WRL::Make<CoreWebView2EnvironmentOptions>();
         std::wstring warguments(arguments->begin(), arguments->end());
         opts->put_AdditionalBrowserArguments(warguments.c_str());
+        std::wcerr << L"[WebviewHost] Additional browser arguments: "
+                   << warguments << std::endl;
     }
 
     // Compute folder to pass to WebView2
@@ -54,6 +62,11 @@ std::unique_ptr<WebviewHost> WebviewHost::Create(
             ? user_data_directory->c_str()
             : nullptr;
 
+    std::wcerr << L"[WebviewHost] resolved browserFolderArg = "
+               << (browserFolderArg ? browserFolderArg : L"(null)") << std::endl;
+    std::wcerr << L"[WebviewHost] resolved dataDirArg = "
+               << (dataDirArg ? dataDirArg : L"(null)") << std::endl;
+
     std::promise<HRESULT> result_promise;
     wil::com_ptr<ICoreWebView2Environment> env;
 
@@ -63,6 +76,8 @@ std::unique_ptr<WebviewHost> WebviewHost::Create(
             opts.get(),
             Callback<ICoreWebView2CreateCoreWebView2EnvironmentCompletedHandler>(
                     [&result_promise, &env](HRESULT r, ICoreWebView2Environment* createdEnv) -> HRESULT {
+                        std::wcerr << L"[WebviewHost] completion handler called, HRESULT=0x"
+                                   << std::hex << r << std::dec << std::endl;
                         result_promise.set_value(r);
                         env.swap(createdEnv);
                         return S_OK;
@@ -70,29 +85,30 @@ std::unique_ptr<WebviewHost> WebviewHost::Create(
                     .Get());
 
     if (FAILED(beginHr)) {
-        std::cerr << "CreateCoreWebView2EnvironmentWithOptions call failed immediately. HRESULT=0x"
+        std::cerr << "[WebviewHost] CreateCoreWebView2EnvironmentWithOptions call failed immediately. HRESULT=0x"
                   << std::hex << beginHr << std::dec << std::endl;
         return {};
     }
 
     HRESULT completedHr = result_promise.get_future().get();
     if (FAILED(completedHr)) {
-        std::cerr << "CreateCoreWebView2EnvironmentWithOptions completion failed. HRESULT=0x"
+        std::cerr << "[WebviewHost] CreateCoreWebView2EnvironmentWithOptions completion failed. HRESULT=0x"
                   << std::hex << completedHr << std::dec << std::endl;
         return {};
     }
 
     if (!env) {
-        std::cerr << "WebView2 environment pointer is null after successful creation.\n";
+        std::cerr << "[WebviewHost] WebView2 environment pointer is null after successful creation.\n";
         return {};
     }
 
     auto env3 = env.try_query<ICoreWebView2Environment3>();
     if (!env3) {
-        std::cerr << "Failed to QI ICoreWebView2Environment3.\n";
+        std::cerr << "[WebviewHost] Failed to QI ICoreWebView2Environment3.\n";
         return {};
     }
 
+    std::wcerr << L"[WebviewHost] Successfully created WebView2 environment." << std::endl;
     return std::unique_ptr<WebviewHost>(new WebviewHost(platform, std::move(env3)));
 }
 
