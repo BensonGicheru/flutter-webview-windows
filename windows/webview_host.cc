@@ -57,18 +57,18 @@ std::unique_ptr<WebviewHost> WebviewHost::Create(
     const wchar_t* browserFolderArg =
             exeFolder.empty() ? nullptr : exeFolder.c_str();
 
-    if (browserFolderArg) {
-        std::wcerr << L"[WebviewHost] FINAL browserFolderArg = " << browserFolderArg << std::endl;
-        std::filesystem::path check(browserFolderArg);
-        check /= L"msedgewebview2.exe";
-        if (std::filesystem::exists(check)) {
-            std::wcerr << L"[WebviewHost] Verified file exists at " << check << std::endl;
-        } else {
-            std::wcerr << L"[WebviewHost] ERROR: msedgewebview2.exe missing at " << check << std::endl;
-        }
-    } else {
-        std::wcerr << L"[WebviewHost] browserFolderArg = (null)" << std::endl;
-    }
+//    if (browserFolderArg) {
+//        std::wcerr << L"[WebviewHost] FINAL browserFolderArg = " << browserFolderArg << std::endl;
+//        std::filesystem::path check(browserFolderArg);
+//        check /= L"msedgewebview2.exe";
+//        if (std::filesystem::exists(check)) {
+//            std::wcerr << L"[WebviewHost] Verified file exists at " << check << std::endl;
+//        } else {
+//            std::wcerr << L"[WebviewHost] ERROR: msedgewebview2.exe missing at " << check << std::endl;
+//        }
+//    } else {
+//        std::wcerr << L"[WebviewHost] browserFolderArg = (null)" << std::endl;
+//    }
 
     const wchar_t* dataDirArg =
             (user_data_directory.has_value() && !user_data_directory->empty())
